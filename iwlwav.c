@@ -1,15 +1,3 @@
-/******************************************************************************
-
-         Copyright (c) 2020 - 2025, MaxLinear, Inc.
-         Copyright 2016 - 2020 Intel Corporation
-         Copyright 2015 - 2016 Lantiq Beteiligungs-GmbH & Co. KG
-         Copyright 2009 - 2014 Lantiq Deutschland GmbH
-         Copyright 2007 - 2008 Infineon Technologies AG
-
-  For licensing information, see the file 'LICENSE' in the root folder of
-  this software module.
-
-*******************************************************************************/
 /*! \file  iwlwav.c
  *  \brief Intel vendor NL80211 command implementation as separate iw commands
  */
@@ -876,6 +864,15 @@ static int handle_iwlwav_set_pie_cfg(struct nl80211_state *state,
 	return set_int(msg, argc, argv, WAVE_PIE_CFG_PARAM_COUNT, WAVE_PIE_CFG_PARAM_COUNT, LTQ_NL80211_VENDOR_SUBCMD_SET_PIE_CFG);
 }
 COMMAND(iwlwav, sPIEcfg, "", NL80211_CMD_VENDOR, 0, CIB_NETDEV, handle_iwlwav_set_pie_cfg, "");
+
+static int handle_iwlwav_set_aqm_en(struct nl80211_state *state,
+				     struct nl_msg *msg,
+				     int argc, char **argv,
+				     enum id_input id)
+{
+	return set_int(msg, argc, argv, 2, 2, LTQ_NL80211_VENDOR_SUBCMD_SET_AQM_STA_EN);
+}
+COMMAND(iwlwav, sAqmEn, "", NL80211_CMD_VENDOR, 0, CIB_NETDEV, handle_iwlwav_set_aqm_en, "");
 #endif /* WAVE_ENABLE_PIE */
 
 static int handle_iwlwav_set_cca_preamble_puncture_cfg(struct nl80211_state *state,
@@ -1612,6 +1609,58 @@ static int print_vendor_int(struct nl_msg *msg,
 	printf("%s:", print_d->print_msg);
 	for(i = 0; i < print_d->num_of_params; i++)
 		printf("%d ", get_uint32_value(data, i));
+
+	printf("\n");
+
+	return NL_OK;
+}
+
+/******************************************************************************/
+/*! \brief      Print NL80211 vendor command received bitmap value/values from driver in hex
+ *
+ *  \param[in]  msg                pointer to NL message data, must not be NULL
+ *  \param[in]  arg                pointer to 'struct print_data' data, must not be NULL
+ *
+ *  \return     NL_OK on success, non NL_SKIP on error
+ */
+#define BITS_PER_WORD	(8UL * sizeof(uint32_t))
+static int print_vendor_bitmap_hex(struct nl_msg *msg,
+			    void *arg)
+{
+	struct nlattr *attr;
+	struct genlmsghdr *gnlh;
+	uint8_t* data;
+	int i;
+	struct print_data *print_d;
+	uint32_t bits;
+
+	if (!msg || !arg)
+		return NL_SKIP;
+
+	gnlh = nlmsg_data(nlmsg_hdr(msg));
+	print_d = (struct print_data *) arg;
+	attr = nla_find(genlmsg_attrdata(gnlh, 0),
+			genlmsg_attrlen(gnlh, 0),
+			NL80211_ATTR_VENDOR_DATA);
+	if (!attr) {
+		fprintf(stderr, "vendor data attribute missing!\n");
+		return NL_SKIP;
+	}
+
+	/*
+	 * if num_of_params wasn't set, it means that the number of params
+	 * can varied for this command, so get it explicitly from the received attr
+	 */
+	if (!print_d->num_of_params)
+		print_d->num_of_params = (nla_len(attr)) / sizeof(int);
+
+	data = (uint8_t *)nla_data(attr);
+	printf("%s:", print_d->print_msg);
+	bits = 0;
+	for(i = 0; i < print_d->num_of_params; i++) {
+		printf("Bits %u to %lu:  0x%X \n", bits, (bits + BITS_PER_WORD - 1), get_uint32_value(data, i));
+		bits += BITS_PER_WORD;
+	}
 
 	printf("\n");
 
@@ -2377,6 +2426,27 @@ static int handle_iwlwav_get_pie_cfg(struct nl80211_state *state,
 	return sub_cmd_print_int_function(msg, LTQ_NL80211_VENDOR_SUBCMD_GET_PIE_CFG, "gPIEcfg");
 }
 COMMAND(iwlwav, gPIEcfg, "", NL80211_CMD_VENDOR, 0, CIB_NETDEV, handle_iwlwav_get_pie_cfg, "");
+
+static int handle_iwlwav_get_aqm_en(struct nl80211_state *state,
+				     struct nl_msg *msg, int argc,
+				     char **argv, enum id_input id)
+{
+	static struct print_data print_d;
+	char *print_msg = "gAqmEn";
+	if (!msg)
+		return -EFAULT;
+
+	strncpy_s(print_d.print_msg, sizeof(print_d.print_msg),
+		  print_msg, strnlen_s(print_msg, sizeof(print_d.print_msg)));
+	register_handler(print_vendor_bitmap_hex, (void *)&print_d);
+	NLA_PUT_U32(msg, NL80211_ATTR_VENDOR_ID, OUI_LTQ);
+	NLA_PUT_U32(msg, NL80211_ATTR_VENDOR_SUBCMD, LTQ_NL80211_VENDOR_SUBCMD_GET_AQM_STA_EN);
+	return 0;
+
+nla_put_failure:
+	return -ENOBUFS;
+}
+COMMAND(iwlwav, gAqmEn, "", NL80211_CMD_VENDOR, 0, CIB_NETDEV, handle_iwlwav_get_aqm_en, "");
 #endif /* WAVE_ENABLE_PIE */
 
 static int handle_iwlwav_get_stations_statistics(struct nl80211_state *state,
@@ -2394,6 +2464,14 @@ static int handle_iwlwav_get_rts_threshold(struct nl80211_state *state,
 	return sub_cmd_print_int_function(msg, LTQ_NL80211_VENDOR_SUBCMD_GET_RTS_THRESHOLD, "gRtsThreshold");
 }
 COMMAND(iwlwav, gRtsThreshold, "", NL80211_CMD_VENDOR, 0, CIB_NETDEV, handle_iwlwav_get_rts_threshold, "");
+
+static int handle_iwlwav_get_20mhz_tx_power(struct nl80211_state *state,
+					   struct nl_msg *msg, int argc,
+					   char **argv, enum id_input id)
+{
+	return sub_cmd_print_int_function(msg, LTQ_NL80211_VENDOR_SUBCMD_GET_20MHZ_TX_POWER, "g20mhzTxPower");
+}
+COMMAND(iwlwav, g20mhzTxPower, "", NL80211_CMD_VENDOR, 0, CIB_NETDEV, handle_iwlwav_get_20mhz_tx_power, "");
 
 static int handle_iwlwav_get_stats_poll_period(struct nl80211_state *state,
 					       struct nl_msg *msg, int argc,
@@ -3210,6 +3288,8 @@ static int handle_iwlwav_help(struct nl80211_state *state,
 #ifdef WAVE_ENABLE_PIE
 	printf("\tdev <devname> iwlwav sPIEcfg <param_1> <..> <param_n>\n");
 	printf("\t\tSet PIE configuration.\n\n");
+	printf("\tdev <devname> iwlwav sAqmEn <sid> <0/1>\n");
+	printf("\t\tSet AQM enabled.\n\n");
 #endif /* WAVE_ENABLE_PIE */
 
 	printf("\tdev <devname> iwlwav sStationsStat <0..1>\n");
@@ -3435,6 +3515,7 @@ static int handle_iwlwav_help(struct nl80211_state *state,
 	printf("\tdev <devname> iwlwav gRtsRate\n\n");
 #ifdef WAVE_ENABLE_PIE
 	printf("\tdev <devname> iwlwav gPIEcfg\n\n");
+	printf("\tdev <devname> iwlwav gAqmEn\n\n");
 #endif /* WAVE_ENABLE_PIE */
 	printf("\tdev <devname> iwlwav gStationsStat\n\n");
 	printf("\tdev <devname> iwlwav gStatsPollPeriod\n\n");

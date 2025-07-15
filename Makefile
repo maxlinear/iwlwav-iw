@@ -109,7 +109,11 @@ nl80211-commands.inc: nl80211.h
 ifeq ($(IW_ANDROID_BUILD),)
 iw:	$(OBJS)
 	@$(NQ) ' CC  ' iw
+ifeq ($(CONFIG_MXL_WLAN_OSS_BUILD), y)
+	$(Q)$(CC) $(LDFLAGS) $(OBJS) $(LIBS) -o iw-mxl
+else 
 	$(Q)$(CC) $(LDFLAGS) $(OBJS) $(LIBS) -o iw
+endif
 endif
 
 check:

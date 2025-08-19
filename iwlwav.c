@@ -2282,6 +2282,35 @@ static int handle_iwlwav_get_rts_mode(struct nl80211_state *state,
 }
 COMMAND(iwlwav, gRTSmode, "", NL80211_CMD_VENDOR, 0, CIB_NETDEV, handle_iwlwav_get_rts_mode, "");
 
+static int handle_iwlwav_get_max_tx_power(struct nl80211_state *state,
+					  struct nl_msg *msg,
+					  int argc, char **argv,
+					  enum id_input id)
+{
+	int res;
+	int count;
+	uint32_t channel;
+	if (!msg)
+		return -EFAULT;
+
+	if (argc != 1)
+		return -EINVAL;
+
+	count = sscanf_s(argv[0], "%u", &channel);
+
+	if (count != 1)
+		return -EINVAL;
+
+	res = sub_cmd_print_int_function(msg, LTQ_NL80211_VENDOR_SUBCMD_GET_MAX_TX_POWER, "gMaxTxPower");
+	NLA_PUT(msg, NL80211_ATTR_VENDOR_DATA, sizeof(channel), &channel);
+
+	return res;
+
+nla_put_failure:
+	return -ENOBUFS;
+}
+COMMAND(iwlwav, gMaxTxPower, "", NL80211_CMD_VENDOR, 0, CIB_NETDEV, handle_iwlwav_get_max_tx_power, "");
+
 static int handle_iwlwav_get_max_mpdu_len(struct nl80211_state *state,
 					  struct nl_msg *msg, int argc,
 					  char **argv, enum id_input id)
@@ -3552,6 +3581,7 @@ static int handle_iwlwav_help(struct nl80211_state *state,
 	printf("\tdev <devname> iwlwav gMuStaRangeForGroupPerType\n\n");
 	printf("\tdev <devname> iwlwav gMLLinkStats <ml_aid>\n\n");
 	printf("\tdev <devname> iwlwav gMLStaList\n\n");
+	printf("\tdev <devname> iwlwav gMaxTxPower\n\n");
 
 /*************************** DEBUG GET COMMANDS ****************************/
 #ifdef CONFIG_WAVE_DEBUG

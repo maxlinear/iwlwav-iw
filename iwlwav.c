@@ -53,8 +53,9 @@ typedef int8_t s8;
 #define MLD_STR_REGULAR_MODE 1 /* Refer mhi_umi.h for MultiLinkModes */
 #define MAX_TRI_BAND 3
 #define MAX_MLD_MODE 4
-#define MLD_MAIN_LINK 0
-#define MLD_SECONDARY_LINK 1
+#define MLD_MAIN_LINK   0
+#define MLD_SECOND_LINK 1
+#define MLD_THIRD_LINK  2
 #define MAX_NUM_MLD 30
 
 SECTION(iwlwav);
@@ -1527,7 +1528,7 @@ static int print_probe_req_list(struct nl_msg *msg, void *arg)
 		u8 *addr = arr[i].addr;
 		printf("mac addr = %02x:%02x:%02x:%02x:%02x:%02x ",
 		        addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
-		printf("age = %3d signal = %3d\n", arr[i].age, arr[i].rssi);
+		printf("age = %3d signal1 = %3d signal2 = %3d signal3 = %3d signal4 = %3d\n", arr[i].age, arr[i].rssi_ant[0], arr[i].rssi_ant[1], arr[i].rssi_ant[2], arr[i].rssi_ant[3]);
 	}
 
 	printf("\n");
@@ -1825,13 +1826,13 @@ static int print_ml_link_stats(struct nl_msg *msg, void *arg)
 	}
 
 	main_link_active_time = MICRO_TO_SEC(stats->link_active_time[MLD_MAIN_LINK]);
-	secondary_link_active_time = MICRO_TO_SEC(stats->link_active_time[MLD_SECONDARY_LINK]);
+	secondary_link_active_time = MICRO_TO_SEC(stats->link_active_time[MLD_SECOND_LINK]);
 	total_time = main_link_active_time + secondary_link_active_time ;
 
 	if (stats->link_active_time[MLD_MAIN_LINK])
 		main_link_percent = (main_link_active_time * 100.00) / total_time;
 
-	if (stats->link_active_time[MLD_SECONDARY_LINK])
+	if (stats->link_active_time[MLD_SECOND_LINK])
 		secondary_link_percent = (secondary_link_active_time * 100.00) / total_time;
 
 	printf("the current ML operating mode = ");
@@ -1862,6 +1863,7 @@ static int print_ml_sta_list(struct nl_msg *msg, void *arg)
 	struct nlattr *attr;
 	struct genlmsghdr *gnlh;
 	struct mxl_ml_sta_list *ml_sta;
+	u8 *sec_addr;
 	int len, i;
 	char *ml_mode[] = {"MLSR", "MLSR/EMLSR", "STR"};
 
@@ -1890,18 +1892,29 @@ static int print_ml_sta_list(struct nl_msg *msg, void *arg)
 				ml_sta[i].ifname[MLD_MAIN_LINK]);
 		printf("\n\tlink1 sta id:\t\t%d", ml_sta[i].sid[MLD_MAIN_LINK]);
 
-		if (!ml_sta[i].is_single_link) {
+		if (ml_sta[i].link_type == MLD_LINK_TYPE_DUAL_LINK) {
 			/* Dual link mld station */
-			u8 *sec_addr = ml_sta[i].sta_addr[MLD_SECONDARY_LINK];
+			sec_addr = ml_sta[i].sta_addr[MLD_SECOND_LINK];
 			printf("\n\tlink2 sta addr:\t\t%02x:%02x:%02x:%02x:%02x:%02x (on %s)",
 					 sec_addr[0], sec_addr[1], sec_addr[2], sec_addr[3], sec_addr[4], sec_addr[5],
-					 ml_sta[i].ifname[MLD_SECONDARY_LINK]);
-			printf("\n\tlink2 sta id:\t\t%d", ml_sta[i].sid[MLD_SECONDARY_LINK]);
+					 ml_sta[i].ifname[MLD_SECOND_LINK]);
+			printf("\n\tlink2 sta id:\t\t%d", ml_sta[i].sid[MLD_SECOND_LINK]);
+			printf("\n\tsupported mode:\t\t%s", ml_mode[ml_sta[i].supported_mode]);
+		} else if (ml_sta[i].link_type == MLD_LINK_TYPE_TRI_LINK) {
+			sec_addr = ml_sta[i].sta_addr[MLD_SECOND_LINK];
+			printf("\n\tlink2 sta addr:\t\t%02x:%02x:%02x:%02x:%02x:%02x (on %s)",
+					 sec_addr[0], sec_addr[1], sec_addr[2], sec_addr[3], sec_addr[4], sec_addr[5],
+					 ml_sta[i].ifname[MLD_SECOND_LINK]);
+			printf("\n\tlink2 sta id:\t\t%d", ml_sta[i].sid[MLD_SECOND_LINK]);
+			sec_addr = ml_sta[i].sta_addr[MLD_THIRD_LINK];
+			printf("\n\tlink3 sta addr:\t\t%02x:%02x:%02x:%02x:%02x:%02x (on %s)",
+					 sec_addr[0], sec_addr[1], sec_addr[2], sec_addr[3], sec_addr[4], sec_addr[5],
+					 ml_sta[i].ifname[MLD_THIRD_LINK]);
+			printf("\n\tlink3 sta id:\t\t%d", ml_sta[i].sid[MLD_THIRD_LINK]);
 			printf("\n\tsupported mode:\t\t%s", ml_mode[ml_sta[i].supported_mode]);
 		} else {
 			printf("\n\tsupported mode:\t\tSINGLE_LINK");
 		}
-
 		printf("\n");
 	}
 	return NL_OK;
@@ -1939,7 +1952,11 @@ static int print_ml_vap_list(struct nl_msg *msg, void *arg)
 		if (mld_id_bitmap & 0x1) {
 			addr = tmp_ml_vap[i]->mld_addr;
 			printf("\nmld#%d", tmp_ml_vap[i]->mld_id);
-			printf("\n\tInterfaces %s, %s", tmp_ml_vap[i]->ifname[MLD_MAIN_LINK], tmp_ml_vap[i]->ifname[MLD_SECONDARY_LINK]);
+			printf("\n\tInterfaces ");
+			for (int j = 0; j < MLD_MAX_ACTIVE_LINKS; j++) {
+				if (tmp_ml_vap[i]->ifname[j][0] != '\0')
+					printf("%s ", tmp_ml_vap[i]->ifname[j]);
+			}
 			printf("\n\tssid %s", tmp_ml_vap[i]->ssid);
 			printf("\n\tmldaddr %02x:%02x:%02x:%02x:%02x:%02x\n", addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
 			printf("\n");

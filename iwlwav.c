@@ -1453,6 +1453,15 @@ static int handle_iwlwav_set_vw_test_mode(struct nl80211_state *state,
 }
 COMMAND(iwlwav, svWtest, "", NL80211_CMD_VENDOR, 0, CIB_NETDEV, handle_iwlwav_set_vw_test_mode, "");
 
+static int handle_iwlwav_set_mru_tx_power_enable(struct nl80211_state *state,
+					     struct nl_msg *msg,
+					     int argc, char **argv,
+					     enum id_input id)
+{
+	return set_int(msg, argc, argv, 1, 1, LTQ_NL80211_VENDOR_SUBCMD_SET_MRU_TX_POWER_ENABLE);
+}
+COMMAND(iwlwav, sMruTxPowerEnable, "", NL80211_CMD_VENDOR, 0, CIB_NETDEV, handle_iwlwav_set_mru_tx_power_enable, "");
+
 static int handle_iwlwav_set_start_cca_msr(struct nl80211_state *state,
 				     struct nl_msg *msg,
 				     int argc, char **argv,
@@ -1804,7 +1813,8 @@ static int print_ml_link_stats(struct nl_msg *msg, void *arg)
 	struct nlattr *attr;
 	struct genlmsghdr *gnlh;
 	struct ml_link_stats *stats;
-	float main_link_percent = 0, secondary_link_percent = 0, main_link_active_time, secondary_link_active_time, total_time;
+	float main_link_percent = 0, secondary_link_percent = 0, backup_link_percent = 0;
+	float main_link_active_time, secondary_link_active_time, backup_link_active_time, total_time;
 	char *band[] = {"2.4Ghz", "5Ghz", "6Ghz"};
 	char *ml_mode[] = {"STR_CERTICATION", "STR", "EMLSR", "MLSR"}; /* Refer mhi_umi.h for MultiLinkModes */
 
@@ -1820,40 +1830,81 @@ static int print_ml_link_stats(struct nl_msg *msg, void *arg)
 	}
 
 	stats = (struct ml_link_stats *)nla_data(attr);
-	if (stats->main_band >= MAX_TRI_BAND || stats->secondary_band >= MAX_TRI_BAND || stats->current_ml_operating_mode >= MAX_MLD_MODE) {
+	if (stats->main_band >= MAX_TRI_BAND || stats->current_ml_operating_mode >= MAX_MLD_MODE) {
 		fprintf(stderr, "statistics data is not valid!\n");
 		return NL_SKIP;
 	}
 
-	main_link_active_time = MICRO_TO_SEC(stats->link_active_time[MLD_MAIN_LINK]);
-	secondary_link_active_time = MICRO_TO_SEC(stats->link_active_time[MLD_SECOND_LINK]);
-	total_time = main_link_active_time + secondary_link_active_time ;
-
-	if (stats->link_active_time[MLD_MAIN_LINK])
-		main_link_percent = (main_link_active_time * 100.00) / total_time;
-
-	if (stats->link_active_time[MLD_SECOND_LINK])
-		secondary_link_percent = (secondary_link_active_time * 100.00) / total_time;
-
-	printf("the current ML operating mode = ");
-
-	if (band[stats->main_band] == band[stats->secondary_band]) {
-		printf("SINGLE_LINK\n");
-		printf("link band = %s\n", band[stats->main_band]);
+	/* Single link: secondary_band and third_band are INVALID */
+	if (stats->secondary_band == MLO_LINK_STAT_BAND_INVALID) {
+		printf("The current ML operating mode = SINGLE_LINK\n");
+		printf("Link Band = %s\n", band[stats->main_band]);
 		return NL_OK;
-	} else {
-		printf("%s\n", ml_mode[stats->current_ml_operating_mode]);
 	}
 
-	printf("link1 band = %s\n", band[stats->main_band]);
-	printf("link2 band = %s\n", band[stats->secondary_band]);
+	if (stats->secondary_band >= MAX_TRI_BAND) {
+		fprintf(stderr, "statistics data is not valid!\n");
+		return NL_SKIP;
+	}
+
+	printf("The current ML operating mode = %s\n", ml_mode[stats->current_ml_operating_mode]);
+
+	if ((stats->third_band != MLO_LINK_STAT_BAND_INVALID) && (stats->third_band < MAX_TRI_BAND))
+		printf("Link Type = TRI BAND\n");
+	else
+		printf("Link Type = DUAL BAND\n");
+
+	printf("Main Link Band = %s\n", band[stats->main_band]);
+	printf("Secondary Link Band = %s\n", band[stats->secondary_band]);
+
+	/* Tri-link: third_band is valid */
+	if (stats->third_band != MLO_LINK_STAT_BAND_INVALID) {
+		if (stats->third_band >= MAX_TRI_BAND) {
+			fprintf(stderr, "statistics data is not valid!\n");
+			return NL_SKIP;
+		}
+		printf("Backup Link Band = %s\n", band[stats->third_band]);
+	}
 
 	if (stats->current_ml_operating_mode == MLD_STR_REGULAR_MODE) /* stats are not valid in STR_REGULAR mode */
 		return NL_OK;
 
-	printf("time spent in band %s = %.1f sec (%.1f %%)\n", band[stats->main_band], main_link_active_time, main_link_percent);
-	printf("time spent in band %s = %.1f sec (%.1f %%)\n", band[stats->secondary_band], secondary_link_active_time, secondary_link_percent);
-	printf("total time spend in both bands = %.1f sec\n", total_time);
+	main_link_active_time = MICRO_TO_SEC(stats->link_active_time[MLD_MAIN_LINK]);
+	secondary_link_active_time = MICRO_TO_SEC(stats->link_active_time[MLD_SECOND_LINK]);
+
+	if (stats->third_band != MLO_LINK_STAT_BAND_INVALID) {
+		/* Tri-link time stats */
+		backup_link_active_time = MICRO_TO_SEC(stats->link_active_time[MLD_THIRD_LINK]);
+		total_time = main_link_active_time + secondary_link_active_time + backup_link_active_time;
+
+		if (total_time > 0) {
+			if (stats->link_active_time[MLD_MAIN_LINK])
+				main_link_percent = (main_link_active_time * 100.00) / total_time;
+			if (stats->link_active_time[MLD_SECOND_LINK])
+				secondary_link_percent = (secondary_link_active_time * 100.00) / total_time;
+			if (stats->link_active_time[MLD_THIRD_LINK])
+				backup_link_percent = (backup_link_active_time * 100.00) / total_time;
+		}
+
+		printf("time spent in band %s = %.1f sec (%.1f %%)\n", band[stats->main_band], main_link_active_time, main_link_percent);
+		printf("time spent in band %s = %.1f sec (%.1f %%)\n", band[stats->secondary_band], secondary_link_active_time, secondary_link_percent);
+		printf("time spent in band %s = %.1f sec (%.1f %%)\n", band[stats->third_band], backup_link_active_time, backup_link_percent);
+		printf("total time spent in all bands = %.1f sec\n", total_time);
+	} else {
+		/* Dual-link time stats */
+		total_time = main_link_active_time + secondary_link_active_time;
+
+		if (total_time > 0) {
+			if (stats->link_active_time[MLD_MAIN_LINK])
+				main_link_percent = (main_link_active_time * 100.00) / total_time;
+			if (stats->link_active_time[MLD_SECOND_LINK])
+				secondary_link_percent = (secondary_link_active_time * 100.00) / total_time;
+		}
+
+		printf("time spent in band %s = %.1f sec (%.1f %%)\n", band[stats->main_band], main_link_active_time, main_link_percent);
+		printf("time spent in band %s = %.1f sec (%.1f %%)\n", band[stats->secondary_band], secondary_link_active_time, secondary_link_percent);
+		printf("total time spent in both bands = %.1f sec\n", total_time);
+	}
 
 	return NL_OK;
 }
@@ -2293,6 +2344,14 @@ static int handle_iwlwav_get_vw_test_mode(struct nl80211_state *state,
 	return sub_cmd_print_int_function(msg, LTQ_NL80211_VENDOR_SUBCMD_GET_VW_TEST_MODE, "gvWtest");
 }
 COMMAND(iwlwav, gvWtest, "", NL80211_CMD_VENDOR, 0, CIB_NETDEV, handle_iwlwav_get_vw_test_mode, "");
+
+static int handle_iwlwav_get_mru_tx_power_enable(struct nl80211_state *state,
+					   struct nl_msg *msg, int argc,
+					   char **argv, enum id_input id)
+{
+	return sub_cmd_print_int_function(msg, LTQ_NL80211_VENDOR_SUBCMD_GET_MRU_TX_POWER_ENABLE, "gMruTxPowerEnable");
+}
+COMMAND(iwlwav, gMruTxPowerEnable, "", NL80211_CMD_VENDOR, 0, CIB_NETDEV, handle_iwlwav_get_mru_tx_power_enable, "");
 
 static int handle_iwlwav_get_fils_beacon_flag(struct nl80211_state *state,
 					   struct nl_msg *msg, int argc,
@@ -3434,6 +3493,9 @@ static int handle_iwlwav_help(struct nl80211_state *state,
 	printf("\tdev <devname> iwlwav svWtest <enable/disable>\n");
 	printf("\t\tSet Veriwave test mode.\n\n");
 
+	printf("\tdev <devname> iwlwav sMruTxPowerEnable <enable/disable>\n");
+	printf("\t\tSet MRU Tx power test mode.\n\n");
+
 /*************************** DEBUG SET COMMANDS ****************************/
 #ifdef CONFIG_WAVE_DEBUG
 	printf("\tdev <devname> iwlwav sFixedRateThermal <enable/disable> <threshold> <power_reduction_amount>\n");
@@ -3611,6 +3673,7 @@ static int handle_iwlwav_help(struct nl80211_state *state,
 	printf("\tdev <devname> iwlwav gMLLinkStats <ml_aid>\n\n");
 	printf("\tdev <devname> iwlwav gMLStaList\n\n");
 	printf("\tdev <devname> iwlwav gMaxTxPower\n\n");
+	printf("\tdev <devname> iwlwav gMruTxPowerEnable\n\n");
 
 /*************************** DEBUG GET COMMANDS ****************************/
 #ifdef CONFIG_WAVE_DEBUG
